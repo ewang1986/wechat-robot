@@ -743,6 +743,7 @@ public class App {
 		String result = null;
 		try {
 			File file = new File(filePath);
+			// TODO compare 04a66268eacd8235e54625730df70e60
 			String md5 = getFileMd5(file);
 			if (!file.exists() || !file.isFile()) {
 				throw new IOException("文件不存在");
