@@ -1,12 +1,20 @@
 package me.biezhi.weixin;
 
 import java.awt.EventQueue;
-import java.io.File;
+import java.io.*;
+import java.math.BigInteger;
+import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.Arrays;
-import java.util.List;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.*;
 
+import javax.activation.MimetypesFileTypeMap;
 import javax.swing.UIManager;
 
 import blade.kit.DateKit;
@@ -15,6 +23,7 @@ import blade.kit.http.HttpRequest;
 import blade.kit.json.JSON;
 import blade.kit.json.JSONArray;
 import blade.kit.json.JSONObject;
+import blade.kit.json.JSONValue;
 import blade.kit.logging.Logger;
 import blade.kit.logging.LoggerFactory;
 import me.biezhi.weixin.util.CookieUtil;
@@ -364,11 +373,8 @@ public class App {
 	 * 消息检查
 	 */
 	public int[] syncCheck(){
-		
 		int[] arr = new int[2];
-		
 		String url = this.webpush_url + "/synccheck";
-		
 		JSONObject body = new JSONObject();
 		body.put("BaseRequest", BaseRequest);
 		
@@ -383,8 +389,12 @@ public class App {
 				.header("Cookie", this.cookie);
 		
 		LOGGER.info("[*] " + request);
-		String res = request.body();
-		request.disconnect();
+		String res = null;
+		if(request != null) {
+			res = request.body();
+			request.disconnect();
+		}
+
 
 		if(StringKit.isBlank(res)){
 			return arr;
@@ -399,13 +409,17 @@ public class App {
 		}
 		return arr;
 	}
-	
+
+	/**
+	 * 发送消息
+	 * Request URL:https://wx.qq.com/cgi-bin/mmwebwx-bin/webwxsendmsg
+	 *
+	 * @param content
+	 * @param to
+	 */
 	private void webwxsendmsg(String content, String to) {
-		
 		String url = this.base_uri + "/webwxsendmsg?lang=zh_CN&pass_ticket=" + this.pass_ticket;
-		
 		JSONObject body = new JSONObject();
-		
 		String clientMsgId = DateKit.getCurrentUnixTime() + StringKit.getRandomNumber(5);
 		JSONObject Msg = new JSONObject();
 		Msg.put("Type", 1);
@@ -427,7 +441,48 @@ public class App {
 		request.body();
 		request.disconnect();
 	}
-	
+
+	/**
+	 * 发送图片消息
+	 * Request URL:https://wx.qq.com/cgi-bin/mmwebwx-bin/webwxsendmsgimg?fun=async&f=json
+	 */
+	private void webwxsendimagemsg(String mediaId, String content, String to) {
+		//String url = this.base_uri + "/webwxsendmsg?lang=zh_CN&pass_ticket=" + this.pass_ticket;
+		String url = "https://wx.qq.com/cgi-bin/mmwebwx-bin/webwxsendmsgimg?fun=async&f=json";
+		JSONObject body = new JSONObject();
+		String clientMsgId = DateKit.getCurrentUnixTime() + StringKit.getRandomNumber(5);
+		JSONObject Msg = new JSONObject();
+		Msg.put("Type", 3);
+		Msg.put("MediaId", mediaId);
+		Msg.put("Content", content);
+		Msg.put("FromUserName", User.getString("UserName"));
+		Msg.put("ToUserName", to);
+		Msg.put("LocalID", clientMsgId);
+		Msg.put("ClientMsgId", clientMsgId);
+
+		body.put("BaseRequest", this.BaseRequest);
+		body.put("Msg", Msg);
+		//body.put("Scene", 0);
+
+		HttpRequest request = HttpRequest.post(url)
+				.header("Content-Type", "application/json;charset=utf-8")
+				.header("Cookie", this.cookie)
+				.send(body.toString());
+
+		LOGGER.info("[*] " + request);
+		request.body();
+		request.disconnect();
+	}
+
+	/**
+	 * 上传媒体文件
+	 *
+	 * Request URL:https://file.wx.qq.com/cgi-bin/mmwebwx-bin/webwxuploadmedia?f=json
+	 */
+	private void uploadMedia() {
+
+	}
+
 	/**
 	 * 获取最新消息
 	 */
@@ -518,13 +573,13 @@ public class App {
 	}
 	
 	private final String ITPK_API = "http://i.itpk.cn/api.php";
-	
 	// 这里的api_key和api_secret可以自己申请一个
 	private final String KEY = "?api_key=你的api_key&api_secret=你的api_secret";
 	
 	private String xiaodoubi(String msg) {
 		String url = ITPK_API + KEY + "&question=" + msg;
 		String result = HttpRequest.get(url).body();
+		LOGGER.info("xiaodoubi:"+result);
 		return result;
 	}
 
@@ -543,7 +598,43 @@ public class App {
 		}
 		return name;
 	}
-	
+
+	/**
+	 * 自动发送推广消息（纯文本消息 图片消息）
+	 * 自动清粉（给好友群发，根据好友回复内容判断是否还是好友，然后调用删除好友接口）
+	 *
+	 */
+	public void autoSend()
+	{
+		// 1.获取所有微信好友
+		// 2.循环给每个微信好友发送消息
+		//String textContent = "你好";
+		final String textContent = "号外、号外：电费单、水费单、燃气费单下来了，当你不想下楼缴费的时候，想想我，缴费还送你积分，" +
+				"积分当钱花——微信公众号里搜索“云卖驿栈”或点击链接http://www.yunmai11.com/wap/LifeService/index.html，" +
+				"关注邮政缴费+云卖驿栈营业厅线上平台，给你最便捷的缴费体验！老方便了，大家申请推广员赚积分，积分当钱花,商城购物，送到家！";
+        final String imagePath = "/home/wyz/dev/mao.png";
+
+		new Thread(new Runnable() {
+			@Override
+			public void run() {
+				for (int i=0; i<ContactList.size();i++) {
+					JSONObject jsonObj = ContactList.getJSONObject(i);
+					String toUserName = jsonObj.getString("UserName");
+					String mediaId = uploadImage(imagePath,toUserName);
+					webwxsendmsg(textContent, toUserName);
+					webwxsendimagemsg(mediaId,textContent,toUserName);
+					LOGGER.info("已发送"+ i +"条");
+					try {
+						Thread.sleep(100);
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+				}
+			}
+		}).start();
+
+	}
+
 	public void listenMsgMode(){
 		new Thread(new Runnable() {
 			@Override
@@ -553,7 +644,6 @@ public class App {
 				while(true){
 					
 					int[] arr = syncCheck();
-					
 					LOGGER.info("[*] retcode=%s,selector=%s", arr[0], arr[1]);
 					
 					if(arr[0] == 1100){
@@ -574,6 +664,7 @@ public class App {
 							LOGGER.info("[*] 你在手机上玩微信被我发现了 %d 次", playWeChat);
 							webwxsync();
 						} else if(arr[1] == 3){
+
 						} else if(arr[1] == 0){
 							try {
 								Thread.sleep(100);
@@ -637,12 +728,212 @@ public class App {
 			
 			LOGGER.info("[*] 获取联系人成功");
 			LOGGER.info("[*] 共有 %d 位联系人", app.ContactList.size());
-			
+			//自动推广
+			app.autoSend();
 			// 监听消息
 			app.listenMsgMode();
 			
 			//mvn exec:java -Dexec.mainClass="me.biezhi.weixin.App"
 		}
 	}
-	
+
+	//******************************************************** 处理媒体消息 start ******************************************************//
+
+	public String uploadImage(String filePath,String toUserName) {
+		String result = null;
+		try {
+			File file = new File(filePath);
+			String md5 = getFileMd5(file);
+			if (!file.exists() || !file.isFile()) {
+				throw new IOException("文件不存在");
+			}
+			String mimeType = new MimetypesFileTypeMap().getContentType(file);
+			String uin = this.wxuin;
+			String sid = this.wxsid;
+			String skey = this.skey;
+			String deviceId = this.deviceId;
+			String clientMediaId = System.currentTimeMillis()+"";
+			String fromUser = User.getString("UserName");
+			String webwx_data_ticket = get_webwx_data_ticket();//webwx_data_ticket
+			String apiPath = "https://file.wx.qq.com/cgi-bin/mmwebwx-bin/webwxuploadmedia?f=json";
+
+			URL url = new URL(apiPath);
+			HttpURLConnection con = (HttpURLConnection)url.openConnection();
+			con.setRequestMethod("POST");
+			con.setDoInput(true);
+			con.setDoOutput(true);
+			con.setUseCaches(false);
+			con.setRequestProperty("Connection", "Keep-Alive");
+			con.setRequestProperty("Charset", "UTF-8");
+			con.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.73 Safari/537.36");
+			String boundary = "----WebKitFormBoundary" + getRandomString(16);
+			con.setRequestProperty("Content-Type", "multipart/form-data; boundary="+ boundary);
+
+			String requestString = "{\"UploadType\":2,\"BaseRequest\":{\"Uin\":" + Long.parseLong(uin) + ",\"Sid\":\"" + sid +  "\",\"Skey\":\"" +
+					skey + "\",\"DeviceID\":\"" + deviceId + "\"},\"ClientMediaId\":" + clientMediaId + ",\"TotalLen\":" + file.length() +
+					",\"StartPos\":0,\"DataLen\":"+ file.length() +",\"MediaType\":4,\"FromUserName\":\"" + fromUser + "\",\"ToUserName\":\"" + toUserName + "\",\"FileMd5\":\"" + md5 + "\"}";
+			StringBuilder sb = new StringBuilder();
+			sb.append("--").append(boundary).append("\r\n");
+			sb.append("Content-Disposition: form-data; name=\"id\"\r\n\r\n");
+			sb.append("WU_FILE_0\r\n");
+			sb.append("--").append(boundary).append("\r\n");
+			sb.append("Content-Disposition: form-data; name=\"name\"\r\n\r\n");
+			sb.append(file.getName()).append("\r\n");;//debug
+			sb.append("--").append(boundary).append("\r\n");
+			sb.append("Content-Disposition: form-data; name=\"type\"\r\n\r\n");
+			sb.append(mimeType+"\r\n");
+			sb.append("--").append(boundary).append("\r\n");
+			sb.append("Content-Disposition: form-data; name=\"lastModifiedDate\"\r\n\r\n");
+			sb.append(getGMT(new Date(file.lastModified()))).append("\r\n");//debug
+			sb.append("--").append(boundary).append("\r\n");
+			sb.append("Content-Disposition: form-data; name=\"size\"\r\n\r\n");
+			sb.append(file.length()).append("\r\n");
+			sb.append("--").append(boundary).append("\r\n");
+			sb.append("Content-Disposition: form-data; name=\"mediatype\"\r\n\r\n");
+			sb.append("pic\r\n");
+			sb.append("--").append(boundary).append("\r\n");
+			sb.append("Content-Disposition: form-data; name=\"uploadmediarequest\"\r\n\r\n");
+			sb.append(requestString).append("\r\n");//debug
+			sb.append("--").append(boundary).append("\r\n");
+			sb.append("Content-Disposition: form-data; name=\"webwx_data_ticket\"\r\n\r\n");
+			sb.append(webwx_data_ticket).append("\r\n");
+			sb.append("--").append(boundary).append("\r\n");
+			sb.append("Content-Disposition: form-data; name=\"pass_ticket\"\r\n\r\n");
+			sb.append("undefined\r\n");
+			sb.append("--").append(boundary).append("\r\n");
+			sb.append("Content-Disposition: form-data; name=\"filename\"; filename=\"").append( file.getName()).append("\"\r\n");
+			sb.append("Content-Type: image/jpeg\r\n\r\n");
+
+			byte[] head = sb.toString().getBytes("utf-8");
+			OutputStream out = new DataOutputStream(con.getOutputStream());
+			out.write(head);
+
+			DataInputStream in = new DataInputStream(new FileInputStream(file));
+			int bytes = 0;
+			byte[] bufferOut = new byte[1024];
+			while ((bytes = in.read(bufferOut)) != -1) {
+				out.write(bufferOut, 0, bytes);
+			}
+			in.close();
+			byte[] foot = ("\r\n--" + boundary + "--\r\n").getBytes("utf-8");
+			out.write(foot);
+			out.flush();
+			out.close();
+			StringBuffer buffer = new StringBuffer();
+			BufferedReader reader = null;
+
+			try {
+				// 定义BufferedReader输入流来读取URL的响应
+				reader = new BufferedReader(new InputStreamReader(con.getInputStream()));
+				String line = null;
+				while ((line = reader.readLine()) != null) {
+					// System.out.println(line);
+					buffer.append(line);
+				}
+				if (result == null) {
+					result = buffer.toString();
+				}
+			} catch (IOException e) {
+				System.out.println("发送POST请求出现异常！" + e);
+				e.printStackTrace();
+				throw new IOException("数据读取异常");
+			} finally {
+				if (reader != null) {
+					reader.close();
+				}
+			}
+
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+
+		LOGGER.info("upload image:"+result);
+		return result;
+		//obj.getString("MediaId");
+	}
+
+	private static String getGMT(Date dateCST) {
+		DateFormat df = new SimpleDateFormat("EEE MMM dd yyyy HH:mm:ss z+0800 (中国标准时间)", Locale.ENGLISH);
+		df.setTimeZone(TimeZone.getTimeZone("GMT")); // modify Time Zone.
+		return(df.format(dateCST));
+	}
+
+	private static String getRandomString(int length) { //length表示生成字符串的长度
+		String base = "abcdefghijklmnopqrstuvwxyz0123456789";
+		Random random = new Random();
+		StringBuffer sb = new StringBuffer();
+		for (int i = 0; i < length; i++) {
+			int number = random.nextInt(base.length());
+			sb.append(base.charAt(number));
+		}
+		return sb.toString();
+	}
+
+	private static String getFileMd5X(final File file){
+		try {
+			//return DigestUtils.md5Hex(new FileInputStream(file));
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return null;
+	}
+
+	public static String getFileMd5XX(File file) {
+		FileInputStream fis = null;
+		try {
+			MessageDigest md = MessageDigest.getInstance("MD5");
+			fis = new FileInputStream(file);
+			byte[] buffer = new byte[8192];
+			int length = -1;
+			while ((length = fis.read(buffer)) != -1) {
+				md.update(buffer, 0, length);
+			}
+			String str = new String(md.digest());
+			return str;
+		} catch (IOException ex) {
+			return null;
+		} catch (NoSuchAlgorithmException ex) {
+			return null;
+		} finally {
+			try {
+				fis.close();
+			} catch (IOException ex) {
+			}
+		}
+	}
+
+	public static String getFileMd5(File file) throws FileNotFoundException {
+		String value = null;
+		FileInputStream in = new FileInputStream(file);
+		try {
+			MappedByteBuffer byteBuffer = in.getChannel().map(FileChannel.MapMode.READ_ONLY, 0, file.length());
+			MessageDigest md5 = MessageDigest.getInstance("MD5");
+			md5.update(byteBuffer);
+			BigInteger bi = new BigInteger(1, md5.digest());
+			value = bi.toString(16);
+		} catch (Exception e) {
+			e.printStackTrace();
+		} finally {
+			if(null != in) {
+				try {
+					in.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		return value;
+	}
+
+	public String get_webwx_data_ticket()
+	{
+		String webwx_auth_ticket = null;
+		String[] temp1 = this.cookie.split(";");
+		String ticket = temp1[2];
+		String[] temp2 = ticket.split("=");
+		webwx_auth_ticket = temp2[1];
+		return webwx_auth_ticket;
+	}
+	//*************************************************处理媒体消息 end*****************************************************//
+
 }
